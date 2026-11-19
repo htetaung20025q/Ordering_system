@@ -1,0 +1,89 @@
+# ==========================================
+# FLOW-SYS DOCKER COMPOSE CONFIGURATION
+# ==========================================
+
+services:
+  # 1. Database Service (PostgreSQL 16)
+  db:
+    image: postgres:16-alpine
+    container_name: flowsys_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ordering_system}
+      POSTGRES_USER: ${POSTGRES_USER:-flowsys_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flowsys_secure_pass_2026}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-flowsys_user} -d ${POSTGRES_DB:-ordering_system}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - flowsys-network
+
+  # 2. Backend Service (FastAPI + SQLAlchemy)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: flowsys_backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-flowsys_user}:${POSTGRES_PASSWORD:-flowsys_secure_pass_2026}@db:5432/${POSTGRES_DB:-ordering_system}
+      SECRET_KEY: ${SECRET_KEY:-flowsys-super-secret-production-grade-signing-key-2026}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      CURRENCY: ${CURRENCY:-MMK}
+      CURRENCY_SYMBOL: ${CURRENCY_SYMBOL:-MMK}
+      DEFAULT_TAX_RATE: ${DEFAULT_TAX_RATE:-0.05}
+      DEFAULT_SERVICE_CHARGE_RATE: ${DEFAULT_SERVICE_CHARGE_RATE:-0.10}
+      DATABASE_ECHO: "false"
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - backend_data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - flowsys-network
+
+  # 3. Frontend Service (React SPA via Nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: flowsys_frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - flowsys-network
+
+networks:
+  flowsys-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  backend_data:
+    driver: local
